@@ -162,6 +162,9 @@ class QueryParam:
     Default is True to enable reranking when rerank model is available.
     """
 
+    metadata_filter: dict | None = None
+    """Metadata for filtering nodes and edges, allowing for more precise querying."""
+
 
 @dataclass
 class StorageNameSpace(ABC):
@@ -430,6 +433,12 @@ class BaseGraphStorage(StorageNameSpace, ABC):
             A list of (source_id, target_id) tuples representing edges,
             or None if the node doesn't exist
         """
+
+    async def get_nodes_by_metadata_filter(self, metadata_filter: str) -> list[str]:
+        result = []
+        text_query = f"MATCH (n:`{self.workspace_label}` {metadata_filter})"
+        result = await self.query(text_query)
+        return result
 
     async def get_nodes_batch(self, node_ids: list[str]) -> dict[str, dict]:
         """Get nodes as a batch using UNWIND

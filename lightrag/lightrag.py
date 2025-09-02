@@ -909,7 +909,8 @@ class LightRAG:
 
         await self.apipeline_enqueue_documents(input, ids, file_paths, track_id)
         await self.apipeline_process_enqueue_documents(
-            split_by_character, split_by_character_only
+            split_by_character,
+            split_by_character_only,
         )
 
         return track_id
@@ -992,6 +993,7 @@ class LightRAG:
         ids: list[str] | None = None,
         file_paths: str | list[str] | None = None,
         track_id: str | None = None,
+        metadata: dict | None = None,
     ) -> str:
         """
         Pipeline for Processing Documents
@@ -1006,6 +1008,7 @@ class LightRAG:
             ids: list of unique document IDs, if not provided, MD5 hash IDs will be generated
             file_paths: list of file paths corresponding to each document, used for citation
             track_id: tracking ID for monitoring processing status, if not provided, will be generated with "enqueue" prefix
+            metadata: Optional metadata to associate with the documents
 
         Returns:
             str: tracking ID for monitoring processing status
@@ -1019,6 +1022,8 @@ class LightRAG:
             ids = [ids]
         if isinstance(file_paths, str):
             file_paths = [file_paths]
+        if isinstance(metadata, dict):
+            metadata = [metadata]
 
         # If file_paths is provided, ensure it matches the number of documents
         if file_paths is not None:
@@ -1083,6 +1088,7 @@ class LightRAG:
                     "file_path"
                 ],  # Store file path in document status
                 "track_id": track_id,  # Store track_id in document status
+                "metadata": metadata,  # added provided custom metadata
             }
             for id_, content_data in contents.items()
         }
@@ -1335,6 +1341,7 @@ class LightRAG:
         self,
         split_by_character: str | None = None,
         split_by_character_only: bool = False,
+        metadata: dict | None = None,
     ) -> None:
         """
         Process pending documents by splitting them into chunks, processing
@@ -1456,6 +1463,7 @@ class LightRAG:
                     pipeline_status: dict,
                     pipeline_status_lock: asyncio.Lock,
                     semaphore: asyncio.Semaphore,
+                    metadata: dict | None = None,
                 ) -> None:
                     """Process single document"""
                     file_extraction_stage_ok = False
@@ -1502,6 +1510,7 @@ class LightRAG:
                                     "full_doc_id": doc_id,
                                     "file_path": file_path,  # Add file path to each chunk
                                     "llm_cache_list": [],  # Initialize empty LLM cache list for each chunk
+                                    "metadata": metadata,
                                 }
                                 for dp in self.chunking_func(
                                     self.tokenizer,
@@ -1521,6 +1530,8 @@ class LightRAG:
 
                             # Process document in two stages
                             # Stage 1: Process text chunks and docs (parallel execution)
+                            metadata["processing_start_time"] = processing_start_time
+
                             doc_status_task = asyncio.create_task(
                                 self.doc_status.upsert(
                                     {
@@ -1538,9 +1549,7 @@ class LightRAG:
                                             ).isoformat(),
                                             "file_path": file_path,
                                             "track_id": status_doc.track_id,  # Preserve existing track_id
-                                            "metadata": {
-                                                "processing_start_time": processing_start_time
-                                            },
+                                            "metadata": metadata,
                                         }
                                     }
                                 )
@@ -1566,7 +1575,10 @@ class LightRAG:
                             # Stage 2: Process entity relation graph (after text_chunks are saved)
                             entity_relation_task = asyncio.create_task(
                                 self._process_entity_relation_graph(
-                                    chunks, pipeline_status, pipeline_status_lock
+                                    chunks,
+                                    metadata,
+                                    pipeline_status,
+                                    pipeline_status_lock,
                                 )
                             )
                             await entity_relation_task
@@ -1600,6 +1612,8 @@ class LightRAG:
                             processing_end_time = int(time.time())
 
                             # Update document status to failed
+                            metadata["processing_start_time"] = processing_start_time
+                            metadata["processing_end_time"] = processing_end_time
                             await self.doc_status.upsert(
                                 {
                                     doc_id: {
@@ -1613,10 +1627,7 @@ class LightRAG:
                                         ).isoformat(),
                                         "file_path": file_path,
                                         "track_id": status_doc.track_id,  # Preserve existing track_id
-                                        "metadata": {
-                                            "processing_start_time": processing_start_time,
-                                            "processing_end_time": processing_end_time,
-                                        },
+                                        "metadata": metadata,
                                     }
                                 }
                             )
@@ -1641,10 +1652,15 @@ class LightRAG:
                                     current_file_number=current_file_number,
                                     total_files=total_files,
                                     file_path=file_path,
+                                    metadata=metadata,  # NEW: Pass metadata to merge function
                                 )
 
                                 # Record processing end time
                                 processing_end_time = int(time.time())
+                                metadata["processing_start_time"] = (
+                                    processing_start_time
+                                )
+                                metadata["processing_end_time"] = processing_end_time
 
                                 await self.doc_status.upsert(
                                     {
@@ -1660,10 +1676,7 @@ class LightRAG:
                                             ).isoformat(),
                                             "file_path": file_path,
                                             "track_id": status_doc.track_id,  # Preserve existing track_id
-                                            "metadata": {
-                                                "processing_start_time": processing_start_time,
-                                                "processing_end_time": processing_end_time,
-                                            },
+                                            "metadata": metadata,
                                         }
                                     }
                                 )
@@ -1701,6 +1714,11 @@ class LightRAG:
                                 processing_end_time = int(time.time())
 
                                 # Update document status to failed
+                                metadata["processing_start_time"] = (
+                                    processing_start_time
+                                )
+                                metadata["processing_end_time"] = processing_end_time
+
                                 await self.doc_status.upsert(
                                     {
                                         doc_id: {
@@ -1712,10 +1730,7 @@ class LightRAG:
                                             "updated_at": datetime.now().isoformat(),
                                             "file_path": file_path,
                                             "track_id": status_doc.track_id,  # Preserve existing track_id
-                                            "metadata": {
-                                                "processing_start_time": processing_start_time,
-                                                "processing_end_time": processing_end_time,
-                                            },
+                                            "metadata": metadata,
                                         }
                                     }
                                 )
@@ -1732,6 +1747,7 @@ class LightRAG:
                             pipeline_status,
                             pipeline_status_lock,
                             semaphore,
+                            metadata,
                         )
                     )
 
@@ -1776,12 +1792,17 @@ class LightRAG:
                 pipeline_status["history_messages"].append(log_message)
 
     async def _process_entity_relation_graph(
-        self, chunk: dict[str, Any], pipeline_status=None, pipeline_status_lock=None
+        self,
+        chunk: dict[str, Any],
+        metadata: dict | None,
+        pipeline_status=None,
+        pipeline_status_lock=None,
     ) -> list:
         try:
             chunk_results = await extract_entities(
                 chunk,
                 global_config=asdict(self),
+                metadata=metadata,  # Pass metadata here
                 pipeline_status=pipeline_status,
                 pipeline_status_lock=pipeline_status_lock,
                 llm_response_cache=self.llm_response_cache,
