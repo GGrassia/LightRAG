@@ -11,6 +11,9 @@ from typing import (
     TypedDict,
     TypeVar,
     Callable,
+    List,
+    Union,
+    Dict,
 )
 from .utils import EmbeddingFunc
 from .types import KnowledgeGraph
@@ -33,6 +36,46 @@ from .constants import (
 # allows to use different .env file for each lightrag instance
 # the OS environment variables take precedence over the .env file
 load_dotenv(dotenv_path=".env", override=False)
+
+
+@dataclass
+class MetadataFilter:
+    """
+    Represents a logical expression for metadata filtering.
+    
+    Args:
+        operator: "AND", "OR", or "NOT"
+        operands: List of either simple key-value pairs or nested MetadataFilter objects
+    """
+    operator: str
+    operands: List[Union[Dict[str, Any], 'MetadataFilter']] = None
+    
+    def __post_init__(self):
+        if self.operands is None:
+            self.operands = []
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary representation."""
+        return {
+            "operator": self.operator,
+            "operands": [
+                operand.to_dict() if isinstance(operand, MetadataFilter) else operand
+                for operand in self.operands
+            ]
+        }
+    
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'MetadataFilter':
+        """Create from dictionary representation."""
+        operands = []
+        for operand in data.get("operands", []):
+            if isinstance(operand, dict) and "operator" in operand:
+                operands.append(cls.from_dict(operand))
+            else:
+                operands.append(operand)
+        return cls(operator=data.get("operator", "AND"), operands=operands)
+
+
 
 
 class OllamaServerInfos:
@@ -162,7 +205,7 @@ class QueryParam:
     Default is True to enable reranking when rerank model is available.
     """
 
-    metadata_filter: dict | None = None
+    metadata_filter: MetadataFilter | None = None
     """Metadata for filtering nodes and edges, allowing for more precise querying."""
 
 
@@ -434,11 +477,11 @@ class BaseGraphStorage(StorageNameSpace, ABC):
             or None if the node doesn't exist
         """
 
-    async def get_nodes_by_metadata_filter(self, metadata_filter: str) -> list[str]:
-        result = []
-        text_query = f"MATCH (n:`{self.workspace_label}` {metadata_filter})"
-        result = await self.query(text_query)
-        return result
+    async def get_nodes_by_metadata_filter(self, metadata_filter: MetadataFilter | None) -> list[str]:
+        """Get node IDs that match the given metadata filter with logical expressions."""
+        # Default implementation - subclasses should override this method
+        # This is a placeholder that will be overridden by specific implementations
+        raise NotImplementedError("Subclasses must implement get_nodes_by_metadata_filter")
 
     async def get_nodes_batch(self, node_ids: list[str]) -> dict[str, dict]:
         """Get nodes as a batch using UNWIND
