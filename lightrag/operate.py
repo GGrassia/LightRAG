@@ -38,7 +38,6 @@ from .base import (
     BaseVectorStorage,
     TextChunkSchema,
     QueryParam,
-    MetadataFilter
 )
 from .prompt import PROMPTS
 from .constants import (
@@ -1920,7 +1919,6 @@ async def kg_query(
     hashing_kv: BaseKVStorage | None = None,
     system_prompt: str | None = None,
     chunks_vdb: BaseVectorStorage = None,
-    metadata_filters: list | None = None,
 ) -> str | AsyncIterator[str]:
     if not query:
         return PROMPTS["fail_response"]
@@ -1946,6 +1944,7 @@ async def kg_query(
         query_param.ll_keywords or [],
         query_param.user_prompt or "",
         query_param.enable_rerank,
+        query_param.metadata_filter,
     )
     cached_response = await handle_cache(
         hashing_kv, args_hash, query, query_param.mode, cache_type="query"
@@ -2248,7 +2247,7 @@ async def _get_vector_context(
         # Use chunk_top_k if specified, otherwise fall back to top_k
         search_top_k = query_param.chunk_top_k or query_param.top_k
 
-        results = await chunks_vdb.query(query, top_k=search_top_k, ids=query_param.ids)
+        results = await chunks_vdb.query(query, top_k=search_top_k, ids=query_param.ids, metadata_filter=query_param.metadata_filter)
         if not results:
             logger.info(f"Naive query: 0 chunks (chunk_top_k: {search_top_k})")
             return []
@@ -2262,6 +2261,7 @@ async def _get_vector_context(
                     "file_path": result.get("file_path", "unknown_source"),
                     "source_type": "vector",  # Mark the source type
                     "chunk_id": result.get("id"),  # Add chunk_id for deduplication
+                    "metadata": result.get("metadata")
                 }
                 valid_chunks.append(chunk_with_metadata)
 
@@ -2286,7 +2286,7 @@ async def _build_query_context(
     query_param: QueryParam,
     chunks_vdb: BaseVectorStorage = None,
 ):
-    logger.info(f"Process {os.getpid()} building query context...")
+    logger.info(f"Process {os.getpid()} building query context with metadata {query_param.metadata_filter}...")
 
     # Collect chunks from different sources separately
     vector_chunks = []
@@ -2767,8 +2767,8 @@ async def _build_query_context(
     )
 
     # not necessary to use LLM to generate a response
-    if not entities_context and not relations_context:
-        return None
+    #if not entities_context and not relations_context:
+    #    return None
 
     # output chunks tracking infomations
     # format: <source><frequency>/<order> (e.g., E5/2 R2/1 C1/1)
@@ -2822,12 +2822,12 @@ async def _get_node_data(
 ):
     # get similar entities
     logger.info(
-        f"Query nodes: {query}, top_k: {query_param.top_k}, cosine: {entities_vdb.cosine_better_than_threshold}"
+        f"Query nodes: {query}, top_k: {query_param.top_k}, cosine: {entities_vdb.cosine_better_than_threshold}, metadata: {query_param.metadata_filter}"
     )
+    
 
-    results = await entities_vdb.query(
-        query, top_k=query_param.top_k, ids=query_param.ids
-    )
+    #Metadata added to all vdb query methods and base method, ONLY POSTGRES has been implemented and tested
+    results = await entities_vdb.query(query, top_k=query_param.top_k, ids=query_param.ids, metadata_filter=query_param.metadata_filter) 
 
     if not len(results):
         return [], []
@@ -2836,21 +2836,13 @@ async def _get_node_data(
     node_ids = [r["entity_name"] for r in results]
 
 
-    # TODO update method to take in the metadata_filter dataclass
-    node_kg_ids = []
-    if hasattr(knowledge_graph_inst, "get_nodes_by_metadata_filter"):
-        node_kg_ids = await asyncio.gather(
-            knowledge_graph_inst.get_nodes_by_metadata_filter(QueryParam.metadata_filter)
-        )
-
-    filtered_node_ids = (
-        [nid for nid in node_ids if nid in node_kg_ids] if node_kg_ids else node_ids
-    )
+    # Extract all entity IDs from your results list
+    node_ids = [r["entity_name"] for r in results]
 
     # Call the batch node retrieval and degree functions concurrently.
     nodes_dict, degrees_dict = await asyncio.gather(
-        knowledge_graph_inst.get_nodes_batch(filtered_node_ids),
-        knowledge_graph_inst.node_degrees_batch(filtered_node_ids),
+        knowledge_graph_inst.get_nodes_batch(node_ids),
+        knowledge_graph_inst.node_degrees_batch(node_ids),
     )
 
     # Now, if you need the node data and degree in order:
@@ -3116,7 +3108,7 @@ async def _get_edge_data(
     )
 
     results = await relationships_vdb.query(
-        keywords, top_k=query_param.top_k, ids=query_param.ids
+        keywords, top_k=query_param.top_k, ids=query_param.ids, metadata_filter=query_param.metadata_filter
     )
 
     if not len(results):
