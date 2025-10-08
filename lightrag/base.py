@@ -178,6 +178,12 @@ class QueryParam:
     containing citation information for the retrieved content.
     """
 
+    llm_kwargs: dict[str, Any] = field(default_factory=dict)
+    """Additional keyword arguments to pass to the LLM function for this specific query.
+    Examples: {"response_format": {"type": "json_object"}, "temperature": 0.7}
+    These will be merged with global llm_model_kwargs, with query-level values taking precedence.
+    """
+
 
 @dataclass
 class StorageNameSpace(ABC):

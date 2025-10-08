@@ -4,6 +4,7 @@ from functools import partial
 import asyncio
 import json
 import json_repair
+import re
 from typing import Any, AsyncIterator, overload, Literal
 from collections import Counter, defaultdict
 
@@ -2519,13 +2520,15 @@ async def kg_query(
         )
         response = cached_response
     else:
-        response = await use_model_func(
-            user_query,
-            system_prompt=sys_prompt,
-            history_messages=query_param.conversation_history,
-            enable_cot=True,
-            stream=query_param.stream,
-        )
+        # Merge query-level llm_kwargs with call parameters
+        call_kwargs = {
+            "system_prompt": sys_prompt,
+            "history_messages": query_param.conversation_history,
+            "enable_cot": True,
+            "stream": query_param.stream,
+            **query_param.llm_kwargs,
+        }
+        response = await use_model_func(user_query, **call_kwargs)
 
         if hashing_kv and hashing_kv.global_config.get("enable_llm_cache"):
             queryparam_dict = {
@@ -4314,13 +4317,15 @@ async def naive_query(
         )
         response = cached_response
     else:
-        response = await use_model_func(
-            user_query,
-            system_prompt=sys_prompt,
-            history_messages=query_param.conversation_history,
-            enable_cot=True,
-            stream=query_param.stream,
-        )
+        # Merge query-level llm_kwargs with call parameters
+        call_kwargs = {
+            "system_prompt": sys_prompt,
+            "history_messages": query_param.conversation_history,
+            "enable_cot": True,
+            "stream": query_param.stream,
+            **query_param.llm_kwargs,
+        }
+        response = await use_model_func(user_query, **call_kwargs)
 
         if hashing_kv and hashing_kv.global_config.get("enable_llm_cache"):
             queryparam_dict = {
